@@ -1,0 +1,39 @@
+_export:
+  credentials:
+     oauth_endpoint: "https://api.acxiom.com/api/v1/auth/oauth2/token"
+     client_id: ${secret:DSAPI.CLIENT_ID}
+     client_secret: ${secret:DSAPI.CLIENT_SECRET}
+     grant_type: "client_credentials"
+  dsapi:
+      endpoint: "https://test.api.acxiom.com/v1/people/match"
+      bundle: ""
+      tenant_id: ${secret:DSAPI.TENANTID}
+      role: ""
+      match_options: ""
+
+  pii:
+     rec1: "firstName=EMALYN&middleName=HARLOW&lastName=MAJOR&streetAddress=4740+CHATFORD+AVE&city=BALTIMORE&state=MD&zipCode=21206"
+
+     
++get_oauth:
+  echo>: Getting oAuth from ${pii.oauth_endpoint}
++post_request:
+  http>: ${credentials.oauth_endpoint}
+  method: POST
+  content-format: form
+  store_content: true
+  content: 
+    client_secret=${credentials.client_secret}&client_id=${credentials.client_id}&grant_type=${credentials.grant_type}
+  headers:
+    - Content-Type: application/x-www-form-urlencoded
+
++enrich:
+  http>: ${dsapi.endpoint}?${pii.rec1}&bundle=${dsapi.bundle}&${dsapi.match_options}&role=${dsapi.role}&tenant=${dsapi.tenant_id}
+  method: GET
+  store_content: true
+  headers:
+    - Accept: application/json
+    - Authorization: Bearer ${JSON.parse(http.last_content)["access_token"]}
+    
++show_results:
+  echo>: results ${http.last_content}
