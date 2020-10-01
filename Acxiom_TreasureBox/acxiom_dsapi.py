@@ -9,6 +9,8 @@ import mapping as mp
 import urllib.parse
 import time
 
+
+
 debug_level=int(os.environ['DSAPI_DEBUG_LEVEL'])
 
 client_id=os.environ['DSAPI_CLIENT_ID']
@@ -46,27 +48,13 @@ def get_input_sql(table_name,limit):
     
   return sql
 
-def get_test_input_sql(table_name,limit):
-   global debug_level
-   # Force 1 record of test data   
-   sql="select 1 as id, 'John' as firstName,'' as middleName,'Smith' as lastName,'157 ARCHERHILL ROAD' as streetAddress,'GLASGOW' as city,'G13 3JQ' as zipCode from raw_synth_pii limit 1"
-   
-   if debug_level==9:
-     print("Debug - Extract SQL forced to 1 record: ",sql)
-
-   return sql
-
 def read_source_pii(engine_name, limit):
     # Read PII from Source Table and return a Panda dataframe
     global database_name, source_table,global_db_client
     df="" 
     try:
         start_time = time.time()
-
-        if debug_level<9:
-           input_sql=get_input_sql(source_table,limit)
-        else:
-           input_sql=get_test_input_sql(source_table,limit)
+        input_sql=get_input_sql(source_table,limit)
 
         res = global_db_client.query(input_sql)
         df = pd.DataFrame(**res)
@@ -152,27 +140,32 @@ def get_ds_api_batch(pii_df,bundles,api_options,api_batch_limit):
     
     recs_in_batch=0
     recs_posted=0
+    recs_input=0
+
     body=[]
     try:
       for index,rec in pii_df.iterrows():
+        recs_input+=1  
         #create querystring from row
         rec_dict=rec.to_dict()
         del rec_dict['id']
         params=(urllib.parse.urlencode(rec_dict, doseq=True)+api_options+"&bundle="+bundles).replace('=None&','=&').replace('=nan&','=&')
-        
-        body.append(api_method+'?'+params)
-        recs_in_batch+=1
-        #execute in batches and serialise response
-        if recs_in_batch==api_batch_limit:
-           responses=execute_dsapi(body)
-           serialise_results(pii_df,responses,bundles,recs_posted)
-           recs_posted=recs_posted+api_batch_limit
-           recs_in_batch=0
-           body=[]
-      # execute the remainder and serialise response  
+        for this_method in api_method.split(','):
+            body.append(this_method+'?'+params)
+            recs_in_batch+=1
+            #execute in batches and serialise response
+            if recs_in_batch==api_batch_limit:
+                responses=execute_dsapi(body)
+                serialise_results(pii_df,responses,bundles,recs_posted)
+                recs_posted=recs_input
+                print("--- Input records processed so far: "+str(recs_input)) 
+                recs_in_batch=0
+                body=[]
+      # execute the remainder and serialise response  Is 
       if recs_in_batch>0:
         responses=execute_dsapi(body)
         serialise_results(pii_df,responses,bundles,recs_posted)
+      print("--- Total input records processed: "+str(recs_input)) 
     except Exception as e:
         raise Exception("Exception in DS-API batch creation - "+str(e))
     
@@ -180,7 +173,7 @@ def execute_dsapi(body):
     # Execute the batch of requests
     global api_endpoint,api_method,dsapi_tenantid,dsapi_role,debug_level
 
-    batch_endpoint = api_endpoint+'/batch/'+api_method.split('/')[2]
+    batch_endpoint = api_endpoint+'/batch/match'
     if dsapi_tenantid and dsapi_role:
         batch_endpoint=batch_endpoint+("?role="+dsapi_role+"&tenant="+dsapi_tenantid).replace('=None&','=&').replace('=nan&','=&')
 
@@ -241,11 +234,16 @@ def nested_dict_iter(key_parent,nested):
             yield key_parent+"."+key, value
 
 def post_batch_results(pii_df,responses,bundles,start_index):
+    api_methods=len(api_method.split(','))
     index=start_index
     try:
         for response in responses:
             post_result(pii_df.at[index,'id'],bundles,nested_dict_iter('dsapi',response))
-            index+=1
+            if api_methods>1:
+                api_methods-=1
+            else:
+                api_methods=len(api_method.split(','))
+                index+=1
     except Exception as e:
         raise Exception("Exception in DS-API reponse in post_batch_results - "+str(e))
 
@@ -263,8 +261,15 @@ def create_dest_table():
   try:
     global_db_client.query('CREATE TABLE IF NOT EXISTS '+dest_table+' (  time bigint, customer_id bigint, key varchar,value varchar,  bundle varchar)')
   except Exception as e:
-     print("Exception creating dest table: "+dest_table," - ",e)       
-     
+     print("Exception creating dest table: "+dest_table," - ",e) 
+
+def drop_dest_table():
+  global dest_table,global_db_client
+  try:
+    global_db_client.query('DROP TABLE IF EXISTS '+dest_table)
+  except Exception as e:
+     print("Exception dropping dest table: "+dest_table," - ",e)    
+
 def bundle_append(bundles='',engine_name='presto', max_recs_to_process=100, api_batch_limit=100):
   # initialise connections
   global global_oauth_token,global_db_client,database_name,global_dest_dict,global_dest_df,api_options
@@ -279,8 +284,15 @@ def bundle_append(bundles='',engine_name='presto', max_recs_to_process=100, api_
   
   if isinstance(pii_df, pd.DataFrame):
     if not pii_df.empty:
+        # Adjust api batch limit to avoid splitting input records over multiple POST requests
+        api_batch_limit=int(api_batch_limit/len(api_method.split(',')))*len(api_method.split(',')) # round down to full batchsize
+        if api_batch_limit==0:
+            api_batch_limit=len(api_method.split(','))
+        print("--- API Batch Limit set to: "+str(api_batch_limit))    
+
         get_ds_api_batch(pii_df,bundles,api_options,api_batch_limit)
         if len(global_dest_dict)>0:
+          drop_dest_table()
           create_dest_table()
           if debug_level>0: print("Debug - Appending dictionary to Dataframe") 
           global_dest_df=global_dest_df.append(global_dest_dict, ignore_index=True)
@@ -295,8 +307,6 @@ def bundle_append(bundles='',engine_name='presto', max_recs_to_process=100, api_
 
 ### Example execution when running outside of Treasure Data. Comment out when running on TD ###
 # bundle_append(bundles='id,personIds,householdId,businessIds,ukDemoAttributes,ukPostcode,ukBasicDemographics',max_recs_to_process=1)
-# bundle_append(bundles='clientIdentityGraph,id,personIds,householdId,businessIds,ukDemoAttributes',max_recs_to_process=1000,api_batch_limit=1000)
-# bundle_append(bundles='inputGlobalAddress',max_recs_to_process=10,api_batch_limit=1000)
+# bundle_append(bundles='',max_recs_to_process=1000,api_batch_limit=100)
 # read_results(100000,bundles_filter='clientIdentityGraph.householdId')
-# read_results(100000,bundles_filter='')
 ### End of section ###       
