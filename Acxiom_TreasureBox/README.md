@@ -107,17 +107,20 @@ The DS-API fields are documented in developer.myacxiom.com.
     DSAPI_TENANTID: ''
     DSAPI_ROLE: ''
     DSAPI_MATCH_ENDPOINT: 'https://test.api.acxiom.com/v1'
+    # Availble match types are : entities, people, households, places, postcodes.
+    # Multiple match types can be specified as a comma separated list e.g. '/person/match,/households/match'
     DSAPI_MATCH_METHOD: '/person/match'
     DSAPI_MATCH_OPTIONS: ''
-    # 0 no debug information returned, >1 PII returned in log, 9 max forced input 1 rec
+    # 0 no debug information returned, >1 PII returned in log
     DSAPI_DEBUG_LEVEL: 0
     DATABASE_NAME: 'dsapi_synthetic'
     SOURCE_TABLE: 'raw_synth_pii'
-    DEST_TABLE: 'dsapi_enhanced_demo_7'
+    DEST_TABLE: 'dsapi_enhanced_demo'
      
     TD_API_KEY: ${secret:TD_API_KEY}
     TD_API_SERVER: ${secret:TD_API_SERVER}
-   
+
+  # bundles: ''  returns all available bundles.
   bundles: ''
   enginename: 'presto' 
   max_recs_to_process: 500
@@ -125,5 +128,54 @@ The DS-API fields are documented in developer.myacxiom.com.
   docker:
      image: "digdag/digdag-python:3.7"
  ```
+
+## Connectivity Testing
+
+The following DigDag is provided to help test connectivity and credentials.
+Add a new workflow using the blank template and paste in the digDag below (or from dsapi_smoketest.dig)
+Add in the secrets for DSAPI.CLIENT_ID, DSAPI.CLIENT_SECRET and set DSAPI.TENANTID to empty.
+
+```yaml
+_export:
+  credentials:
+     oauth_endpoint: "https://api.acxiom.com/api/v1/auth/oauth2/token"
+     client_id: ${secret:DSAPI.CLIENT_ID}
+     client_secret: ${secret:DSAPI.CLIENT_SECRET}
+     grant_type: "client_credentials"
+  dsapi:
+      endpoint: "https://test.api.acxiom.com/v1/people/match"
+      bundle: ""
+      tenant_id: ${secret:DSAPI.TENANTID}
+      role: ""
+      match_options: ""
+
+  pii:
+     rec1: "firstName=EMALYN&middleName=HARLOW&lastName=MAJOR&streetAddress=4740+CHATFORD+AVE&city=BALTIMORE&state=MD&zipCode=21206"
+
+     
++get_oauth:
+  echo>: Getting oAuth from ${pii.oauth_endpoint}
++post_request:
+  http>: ${credentials.oauth_endpoint}
+  method: POST
+  content-format: form
+  store_content: true
+  content: 
+    client_secret=${credentials.client_secret}&client_id=${credentials.client_id}&grant_type=${credentials.grant_type}
+  headers:
+    - Content-Type: application/x-www-form-urlencoded
+
++enrich:
+  http>: ${dsapi.endpoint}?${pii.rec1}&bundle=${dsapi.bundle}&${dsapi.match_options}&role=${dsapi.role}&tenant=${dsapi.tenant_id}
+  method: GET
+  store_content: true
+  headers:
+    - Accept: application/json
+    - Authorization: Bearer ${JSON.parse(http.last_content)["access_token"]}
+    
++show_results:
+  echo>: results ${http.last_content}
+
+```
 
 
