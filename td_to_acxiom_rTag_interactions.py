@@ -1,5 +1,7 @@
 # Description
-
+# Reads the last X days worth of logs from the rAPID data repository;
+# REALID_AGE_OF_LOGS_IN_DAYS set in this script determines number of days 
+# Writes the Owned and Paid Behavior data back to Treasure Data
 #################################################################################################################
 # This code to add the classes to the path is not needed in the workflow as the directory structure will be flat
 import sys, os
