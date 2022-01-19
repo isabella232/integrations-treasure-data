@@ -64,7 +64,7 @@ def dsapi_to_target(source_row, updated_row):
 def run_flow():
   # Constants used in this example
   TD_DB_NAME="scwalk_db"
-  SOURCE_SQL= 'select sourcekey, address,postcode, firstname, lastname, email, phone from scwalk_db.import_nameadd_20210821 order by time desc, sourcekey desc limit 10'
+  SOURCE_SQL= 'select sourcekey, address,postcode, firstname, lastname, email, phone from scwalk_db.import_nameadd_20210821 order by time desc, sourcekey desc limit 1000'
   DEST_TABLE='import_nameadd_dsapi'
   DEST_TABLE_DEF='sourceid varchar,personId varchar,placeId varchar,address1 varchar,address2 varchar, address3 varchar,address4 varchar,dependentLocality varchar, locality varchar, postalCode varchar, country varchar, countryCode varchar, standardizedFirstName varchar, standardizedLastName varchar,householdId varchar'
   DEST_TABLE_COLUMN_LIST= ['sourceid',
